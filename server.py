@@ -20,12 +20,25 @@ class ChatRoomServer:
     """Represent a MapReduce framework Manager node."""
 
     def __init__(self, host:str, port:int):
-        self.signal["shutdown"]=False
+        self.signal = {"shutdown":False}
         self.tcp_server = threading.Thread(target=self.tcp_server, args=(host,port))
         self.users = {}
-        # users: username -- > host, port, status: online, offline
+        self.checker = None
         self.tcp_server.start()
         self.tcp_server.join()
+
+    def check_status(self):
+        while True:
+            end = True
+            for key, val in self.users.items():
+                if self.users[key]["online"] == False:
+                    end = False
+                    break
+            if end:
+                self.signal["shutdown"] = True
+                break
+            time.sleep(0.1)
+
 
     def tcp_server(self, host:str, port:int):
         """Example TCP socket server."""
@@ -34,7 +47,7 @@ class ChatRoomServer:
             sock.bind((host, port))
             sock.listen()
             sock.settimeout(1)
-            while True:
+            while not self.signal["shutdown"]:
                 try:
                     clientsocket, address = sock.accept()
                 except socket.timeout:
@@ -59,6 +72,7 @@ class ChatRoomServer:
                 except json.JSONDecodeError:
                     continue
                 time.sleep(0.1)
+            self.checker.join()
     
     def interpret_message(self,message_dict:dict):
         if message_dict["message_type"] == "register":
@@ -67,8 +81,6 @@ class ChatRoomServer:
             self.send_message(message_dict)
         elif message_dict["message_type"] == "leave":
             self.users[message_dict["username"]]["online"] = False
-        elif message_dict["message_type"] == "delete":
-            del self.users[message_dict["username"]]
     
     def send_message(self,message_dict:dict):
         username = message_dict["username"]
@@ -124,6 +136,9 @@ class ChatRoomServer:
                 }
                 message = json.dumps(m)
                 sock.sendall(message.encode('utf-8'))
+            if not self.checker:
+                self.checker = threading.Thread(target = self.check_status)
+                self.checker.start()
 
 
 
@@ -135,14 +150,13 @@ class ChatRoomServer:
 @click.option("--loglevel", "loglevel", default="info")
 @click.option("--shared_dir", "shared_dir", default=None)
 def main(host, port, logfile, loglevel, shared_dir):
-    """Run Manager."""
     tempfile.tempdir = shared_dir
     if logfile:
         handler = logging.FileHandler(logfile)
     else:
         handler = logging.StreamHandler()
     formatter = logging.Formatter(
-        f"Manager:{port} [%(levelname)s] %(message)s"
+        f"ChatRoomServer:{port} [%(levelname)s] %(message)s"
     )
     handler.setFormatter(formatter)
     root_logger = logging.getLogger()
